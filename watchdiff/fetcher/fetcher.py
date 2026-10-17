@@ -97,7 +97,11 @@ class Fetcher:
         client_kwargs: dict = {"timeout": config.timeout, "follow_redirects": True}
         if proxy:
             client_kwargs["proxy"] = proxy
+        auth = getattr(config, "auth", None)
+        if auth:
+            client_kwargs["auth"] = (auth["username"], auth["password"])
 
+        request_body = getattr(config, "request_body", None)
         last_exc: Exception | None = None
 
         for attempt in range(config.retries + 1):
@@ -107,7 +111,13 @@ class Fetcher:
                 time.sleep(delay)
             try:
                 with httpx.Client(**client_kwargs) as client:
-                    resp = client.get(config.url, headers=headers)
+                    if request_body is not None:
+                        if isinstance(request_body, dict):
+                            resp = client.post(config.url, json=request_body, headers=headers)
+                        else:
+                            resp = client.post(config.url, content=str(request_body), headers=headers)
+                    else:
+                        resp = client.get(config.url, headers=headers)
                     if resp.status_code in _RETRYABLE_STATUS and attempt < config.retries:
                         last_exc = FetchError(f"HTTP {resp.status_code} for {config.url}")
                         continue
@@ -149,7 +159,11 @@ class AsyncFetcher:
         client_kwargs: dict = {"timeout": config.timeout, "follow_redirects": True}
         if proxy:
             client_kwargs["proxy"] = proxy
+        auth = getattr(config, "auth", None)
+        if auth:
+            client_kwargs["auth"] = (auth["username"], auth["password"])
 
+        request_body = getattr(config, "request_body", None)
         last_exc: Exception | None = None
 
         for attempt in range(config.retries + 1):
@@ -159,7 +173,13 @@ class AsyncFetcher:
                 await asyncio.sleep(delay)
             try:
                 async with httpx.AsyncClient(**client_kwargs) as client:
-                    resp = await client.get(config.url, headers=headers)
+                    if request_body is not None:
+                        if isinstance(request_body, dict):
+                            resp = await client.post(config.url, json=request_body, headers=headers)
+                        else:
+                            resp = await client.post(config.url, content=str(request_body), headers=headers)
+                    else:
+                        resp = await client.get(config.url, headers=headers)
                     if resp.status_code in _RETRYABLE_STATUS and attempt < config.retries:
                         last_exc = FetchError(f"HTTP {resp.status_code} for {config.url}")
                         continue

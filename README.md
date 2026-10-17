@@ -54,6 +54,12 @@ WatchDiff watches web pages, files, APIs, databases, and SSL certificates - then
 | Alert on very first capture | `alert_on_first_check=True` — fires `on_change` even when no previous snapshot exists |
 | Add custom webhook headers | `webhook_headers={"X-Api-Key": "secret"}` — merged into every webhook POST |
 | Auto-delete old snapshots | `retention_days=30` — snapshots older than N days are pruned after each save |
+| HTTP Basic Auth | `auth={"username": "user", "password": "pass"}` |
+| Hook before each fetch | `on_before_check=lambda cfg: print(cfg.label)` |
+| Send POST instead of GET | `request_body={"query": "..."}` — dict → JSON body, str → raw body |
+| Tag watchers for group control | `tags=["shop", "critical"]` then `wd.pause_by_tag("shop")` |
+| Per-watcher / global min interval | `min_interval=60` or `WatchDiff(min_interval=60)` — floor on check frequency |
+| List watchers from CLI | `watchdiff list --config watchdiff.config.json` |
 | Export history as JSON | `.export_reports_json(url)` / `.export_snapshots_json(url)` |
 | Show last stored snapshot from CLI | `watchdiff snapshot https://example.com` |
 | Remove orphan storage files from CLI | `watchdiff clean` — deletes snap/report files not referenced by any active watcher |
@@ -1748,6 +1754,111 @@ Slack webhook payloads now use the [Block Kit](https://api.slack.com/block-kit) 
 
 The richer layout renders as an attachment card with a clear title and structured change list. No configuration needed; it is applied automatically to any `hooks.slack.com` webhook URL.
 
+## HTTP Basic Auth
+
+Authenticate to password-protected endpoints with a single `auth` dict:
+
+```python
+wd.watch(
+    "https://api.example.com/protected",
+    auth={"username": "user", "password": "secret"},
+)
+```
+
+The credentials are passed as an HTTP Basic Auth header on every request. `auth` is compatible with all other options — retries, proxy rotation, custom headers, etc.
+
+## Hook before check (`on_before_check`)
+
+Register a callback that fires **before** each HTTP fetch. Useful for logging, metrics, or mutating shared state before a cycle:
+
+```python
+def log_start(config):
+    print(f"[{config.label}] Starting check at {datetime.now()}")
+
+wd.watch(
+    "https://example.com",
+    on_before_check=log_start,
+)
+```
+
+The callback receives the `WatchConfig` for the watcher. Errors raised inside it are caught and logged as warnings so they never interrupt the check cycle.
+
+## POST requests (`request_body`)
+
+Send a `POST` instead of `GET` by providing a request body. Pass a `dict` for JSON, or a `str` for raw/form-encoded content:
+
+```python
+# JSON body → Content-Type: application/json
+wd.watch(
+    "https://api.example.com/data",
+    request_body={"query": "SELECT * FROM prices"},
+)
+
+# Raw string body
+wd.watch(
+    "https://api.example.com/graphql",
+    request_body='{"query": "{ prices { id value } }"}',
+    headers={"Content-Type": "application/json"},
+)
+```
+
+When `request_body` is set, WatchDiff automatically uses `POST`; omitting it keeps the default `GET` behaviour.
+
+## Tags and group pause/resume
+
+Assign tags to watchers and pause or resume an entire group at once:
+
+```python
+wd.watch("https://shop.example.com/price",   tags=["shop", "critical"])
+wd.watch("https://shop.example.com/stock",   tags=["shop"])
+wd.watch("https://blog.example.com/latest",  tags=["blog"])
+
+wd.start(block=False)
+
+# Pause all "shop" watchers
+wd.pause_by_tag("shop")
+
+# Resume them
+wd.resume_by_tag("shop")
+```
+
+Tags are plain strings. A watcher can have multiple tags. `pause_by_tag` / `resume_by_tag` iterate over all registered watchers and pause/resume every one whose `tags` list contains the given string.
+
+## `watchdiff list` CLI
+
+List all watchers defined in a config file:
+
+```bash
+watchdiff list
+watchdiff list --config my-config.json
+```
+
+Outputs a table with watcher number, ID / URL, label, CSS/XPath target, interval, and tags:
+
+```
+ # │ ID / URL                        │ Label      │ Target  │ Interval │ Tags
+ 1 │ https://example.com/price       │ Price page │ .price  │ 300s     │ shop
+ 2 │ prod  https://api.example.com   │ API        │         │ 60s      │ api, critical
+```
+
+## Minimum interval (`min_interval`)
+
+Prevent checks from running more frequently than a given floor, regardless of `interval` or `jitter`. Useful when many watchers share the same backend and you want to rate-limit overall traffic:
+
+```python
+# Global floor — applies to every watcher that doesn't override it
+wd = WatchDiff(min_interval=30)
+
+# Per-watcher floor — overrides the global setting for this URL
+wd.watch(
+    "https://example.com",
+    interval=10,      # desired interval
+    min_interval=60,  # but never more often than once per 60 s
+)
+```
+
+`min_interval` floors the effective interval after jitter is applied. The global `WatchDiff(min_interval=...)` value is used when the per-watcher field is not set.
+
 ## API reference
 
 ### `WatchDiff`
@@ -1830,6 +1941,11 @@ Register a URL to monitor. All keyword arguments are optional. Returns `self` (c
 | `alert_on_first_check` | `bool` | `False` | Fire `on_change` (and webhooks) on the very first capture even though there is no previous snapshot |
 | `webhook_headers` | `dict[str, str]` | `{}` | Extra HTTP headers merged into every webhook POST for this watcher |
 | `retention_days` | `int \| None` | `None` | Auto-delete snapshots older than N days after each save |
+| `auth` | `dict \| None` | `None` | HTTP Basic Auth credentials `{"username": ..., "password": ...}` |
+| `on_before_check` | `Callable[[WatchConfig], None] \| None` | `None` | Hook called before each fetch cycle |
+| `request_body` | `str \| dict \| None` | `None` | Send POST with this body; `dict` → JSON, `str` → raw |
+| `tags` | `list[str]` | `[]` | Group labels for `pause_by_tag()` / `resume_by_tag()` |
+| `min_interval` | `int \| None` | `None` | Floor on interval in seconds — overrides global `WatchDiff(min_interval=...)` |
 
 ```python
 # Chainable
@@ -2451,6 +2567,7 @@ Commands:
   clear     Delete all stored data for a URL
   pause     Guidance: pause a watcher via the Python API
   resume    Guidance: resume a watcher via the Python API
+  list      List all watchers defined in a config file
 
 Options for run:
   --target           -t   CSS selector or XPath
@@ -2547,6 +2664,10 @@ Options for history / reports:
 
 Options for clear:
   --yes              -y   Skip confirmation prompt
+
+Options for list:
+  --config           -c   Config file to read (default watchdiff.config.json)
+  --verbose          -v   Enable debug logging
 ```
 
 ## Environment variables

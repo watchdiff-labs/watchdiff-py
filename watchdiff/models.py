@@ -100,6 +100,11 @@ class WatchConfig:
     alert_on_first_check: bool                           = False    # fire on_change on the very first capture
     webhook_headers:      dict[str, str]                 = field(default_factory=dict)  # extra headers on every webhook POST
     retention_days:       int | None                     = None     # auto-delete snapshots older than N days
+    auth:                 dict[str, str] | None          = None     # HTTP Basic Auth {"username": ..., "password": ...}
+    on_before_check:      Callable[[WatchConfig], None] | None = None  # called before each fetch
+    request_body:         str | dict | None              = None     # send POST with this body instead of GET
+    tags:                 list[str]                      = field(default_factory=list)  # group labels for pause/resume
+    min_interval:         int | None                     = None     # minimum seconds between two checks (floor on jitter)
 
     def __post_init__(self) -> None:
         if not self.label:

@@ -53,7 +53,7 @@ class SyncScheduler:
     sleep interval, so different URLs can have different cadences.
     """
 
-    def __init__(self, store: Any, concurrency: int | None = None) -> None:
+    def __init__(self, store: Any, concurrency: int | None = None, min_interval: int | None = None) -> None:
         self._store                                                  = store
         self._fetcher                                                = Fetcher()
         self._browser_fetcher: Any                                   = None  # lazy-init on first browser use
@@ -61,6 +61,7 @@ class SyncScheduler:
         self._engine                                                 = DiffEngine()
         self._notifier                                               = Notifier()
         self._semaphore: threading.Semaphore | None                  = threading.Semaphore(concurrency) if concurrency else None
+        self._min_interval: int | None                               = min_interval
         self._on_diff_callbacks: list[Callable[[DiffReport], None]] = []
         self._threads: list[threading.Thread]                        = []
         self._stop_events: list[threading.Event]                     = []
@@ -133,6 +134,20 @@ class SyncScheduler:
         """Resume a paused watcher by its id (if set) or URL."""
         self._paused.discard(id_or_url)
         logger.info("Resumed watcher %s", id_or_url)
+
+    def pause_by_tag(self, tag: str) -> None:
+        """Pause all watchers whose tags list contains the given tag."""
+        for config in self._configs:
+            if tag in getattr(config, "tags", []):
+                self._paused.add(_watcher_key(config))
+        logger.info("Paused watchers with tag %r", tag)
+
+    def resume_by_tag(self, tag: str) -> None:
+        """Resume all watchers whose tags list contains the given tag."""
+        for config in self._configs:
+            if tag in getattr(config, "tags", []):
+                self._paused.discard(_watcher_key(config))
+        logger.info("Resumed watchers with tag %r", tag)
 
     def status(self) -> list[WatcherStatus]:
         """Return a live status snapshot for all registered watchers."""
@@ -209,6 +224,9 @@ class SyncScheduler:
                     effective = max(1.0, effective + delta)
                 if retry_after:
                     effective = max(effective, retry_after)
+                _floor = getattr(config, "min_interval", None) or self._min_interval
+                if _floor:
+                    effective = max(effective, float(_floor))
                 self._next_check_at[key] = time.time() + effective
                 stop_event.wait(timeout=effective)
 
@@ -234,6 +252,12 @@ class SyncScheduler:
             extra_patterns.append(r"\b\d+(\.\d+)?\b")
 
         policy = getattr(config, "failure_policy", None)
+        on_before = getattr(config, "on_before_check", None)
+        if on_before:
+            try:
+                on_before(config)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[%s] on_before_check callback error: %s", config.label, exc)
         t0 = time.monotonic() if getattr(config, "track_response_time", False) else None
         try:
             html = self._fetch(config)
@@ -636,7 +660,7 @@ class AsyncScheduler:
     Use this inside async applications (FastAPI, aiohttp, etc.).
     """
 
-    def __init__(self, store: Any, concurrency: int | None = None) -> None:
+    def __init__(self, store: Any, concurrency: int | None = None, min_interval: int | None = None) -> None:
         self._store                                                  = store
         self._fetcher                                                = AsyncFetcher()
         self._browser_fetcher: Any                                   = None  # lazy-init on first browser use
@@ -644,6 +668,7 @@ class AsyncScheduler:
         self._engine                                                 = DiffEngine()
         self._notifier                                               = Notifier()
         self._semaphore: asyncio.Semaphore | None                    = asyncio.Semaphore(concurrency) if concurrency else None
+        self._min_interval: int | None                               = min_interval
         self._on_diff_callbacks: list[Callable[[DiffReport], None]] = []
         self._configs: list[WatchConfig]                             = []
         self._paused: set[str]                                       = set()
@@ -683,6 +708,20 @@ class AsyncScheduler:
         """Resume a paused watcher by its id (if set) or URL."""
         self._paused.discard(id_or_url)
         logger.info("Resumed watcher %s", id_or_url)
+
+    def pause_by_tag(self, tag: str) -> None:
+        """Pause all watchers whose tags list contains the given tag."""
+        for config in self._configs:
+            if tag in getattr(config, "tags", []):
+                self._paused.add(_watcher_key(config))
+        logger.info("Paused watchers with tag %r", tag)
+
+    def resume_by_tag(self, tag: str) -> None:
+        """Resume all watchers whose tags list contains the given tag."""
+        for config in self._configs:
+            if tag in getattr(config, "tags", []):
+                self._paused.discard(_watcher_key(config))
+        logger.info("Resumed watchers with tag %r", tag)
 
     def status(self) -> list[WatcherStatus]:
         """Return a live status snapshot for all registered watchers."""
@@ -753,6 +792,9 @@ class AsyncScheduler:
                     effective = max(1.0, effective + delta)
                 if retry_after:
                     effective = max(effective, retry_after)
+                _floor = getattr(config, "min_interval", None) or self._min_interval
+                if _floor:
+                    effective = max(effective, float(_floor))
                 self._next_check_at[key] = time.time() + effective
                 await asyncio.sleep(effective)
 
@@ -778,6 +820,12 @@ class AsyncScheduler:
             extra_patterns.append(r"\b\d+(\.\d+)?\b")
 
         policy = getattr(config, "failure_policy", None)
+        on_before = getattr(config, "on_before_check", None)
+        if on_before:
+            try:
+                on_before(config)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[%s] on_before_check callback error: %s", config.label, exc)
         t0 = time.monotonic() if getattr(config, "track_response_time", False) else None
         try:
             html = await self._fetch(config)

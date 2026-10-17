@@ -70,15 +70,20 @@ class WatchDiff:
         storage_dir: str | Path = ".watchdiff",
         store: Any | None = None,
         concurrency: int | None = None,
+        min_interval: int | None = None,
     ) -> None:
         """
         Args:
-            storage_dir: Directory for the default JSON store (ignored when store is given).
-            store:       Custom store instance - Store, SqliteStore, or any compatible object.
-                         When provided, storage_dir is ignored.
+            storage_dir:  Directory for the default JSON store (ignored when store is given).
+            store:        Custom store instance - Store, SqliteStore, or any compatible object.
+                          When provided, storage_dir is ignored.
+            concurrency:  Max number of concurrent watchers (None = unlimited).
+            min_interval: Global floor on check interval in seconds. Per-watcher min_interval
+                          takes precedence when set.
         """
         self._store: Any                                           = store if store is not None else Store(storage_dir)
         self._concurrency: int | None                              = concurrency
+        self._min_interval: int | None                             = min_interval
         self._configs: list[WatchConfig]                           = []
         self._db_configs: list[Any]                                = []
         self._cert_configs: list[Any]                              = []
@@ -154,6 +159,11 @@ class WatchDiff:
         alert_on_first_check: bool                                                             = False,
         webhook_headers: dict[str, str] | None                                                 = None,
         retention_days: int | None                                                             = None,
+        auth: dict[str, str] | None                                                            = None,
+        on_before_check: Callable[[WatchConfig], None] | None                                  = None,
+        request_body: str | dict | None                                                        = None,
+        tags: list[str] | None                                                                 = None,
+        min_interval: int | None                                                               = None,
     ) -> WatchDiff:
         """
         Register a URL to monitor.
@@ -258,6 +268,11 @@ class WatchDiff:
             alert_on_first_check     = alert_on_first_check,
             webhook_headers          = webhook_headers or {},
             retention_days           = retention_days,
+            auth                     = auth,
+            on_before_check          = on_before_check,
+            request_body             = request_body,
+            tags                     = tags or [],
+            min_interval             = min_interval,
         )
         self._configs.append(config)
         return self
@@ -585,7 +600,7 @@ class WatchDiff:
             return
 
         if has_urls:
-            scheduler = SyncScheduler(self._store, concurrency=self._concurrency)
+            scheduler = SyncScheduler(self._store, concurrency=self._concurrency, min_interval=self._min_interval)
             self._scheduler = scheduler
             for cb in self._global_callbacks:
                 scheduler.add_global_callback(cb)
@@ -632,7 +647,7 @@ class WatchDiff:
         coros = []
 
         if has_urls:
-            scheduler = AsyncScheduler(self._store, concurrency=self._concurrency)
+            scheduler = AsyncScheduler(self._store, concurrency=self._concurrency, min_interval=self._min_interval)
             self._async_scheduler = scheduler
             for cb in self._global_callbacks:
                 scheduler.add_global_callback(cb)
@@ -716,6 +731,34 @@ class WatchDiff:
         if self._scheduler is None:
             raise RuntimeError("Scheduler not running. Call .start(block=False) first.")
         self._scheduler.resume(url)
+
+    def pause_by_tag(self, tag: str) -> None:
+        """
+        Pause all watchers that have the given tag.
+
+        Args:
+            tag: Tag string to match (set via the tags= parameter of .watch()).
+
+        Raises:
+            RuntimeError: if the scheduler is not running.
+        """
+        if self._scheduler is None:
+            raise RuntimeError("Scheduler not running. Call .start(block=False) first.")
+        self._scheduler.pause_by_tag(tag)
+
+    def resume_by_tag(self, tag: str) -> None:
+        """
+        Resume all watchers that have the given tag.
+
+        Args:
+            tag: Tag string to match (set via the tags= parameter of .watch()).
+
+        Raises:
+            RuntimeError: if the scheduler is not running.
+        """
+        if self._scheduler is None:
+            raise RuntimeError("Scheduler not running. Call .start(block=False) first.")
+        self._scheduler.resume_by_tag(tag)
 
     def status(self) -> list[WatcherStatus]:
         """

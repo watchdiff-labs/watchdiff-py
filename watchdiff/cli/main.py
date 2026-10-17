@@ -983,6 +983,54 @@ def cmd_resume(
     )
 
 
+@app.command("list")
+def cmd_list(
+    config_file: str = typer.Option(_CONFIG_FILE, "--config", "-c", help="Config file to read."),
+    verbose:     bool = _VERBOSE_OPT,
+) -> None:
+    """List all watchers defined in the config file."""
+    _setup_logging(verbose)
+    path = Path(config_file)
+    if not path.exists():
+        console.print(f"[red]Config file not found:[/] {path}")
+        raise typer.Exit(1)
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        console.print(f"[red]Failed to read config:[/] {exc}")
+        raise typer.Exit(1)
+
+    data     = _normalize_config(data)
+    watchers = data.get("watchers", [])
+
+    if not watchers:
+        console.print("[yellow]No watchers found in config.[/]")
+        return
+
+    table = Table(title=f"Watchers in {path}", show_lines=False)
+    table.add_column("#",        style="dim", width=4)
+    table.add_column("ID / URL", style="cyan")
+    table.add_column("Label",    style="white")
+    table.add_column("Target",   style="dim")
+    table.add_column("Interval", style="yellow", justify="right")
+    table.add_column("Tags",     style="green")
+
+    for i, w in enumerate(watchers, start=1):
+        wid      = w.get("id") or ""
+        url      = w.get("url", "")
+        label    = w.get("label") or ""
+        target   = w.get("target") or ""
+        interval = str(w.get("interval", 300)) + "s"
+        tags_raw = w.get("tags", [])
+        tags     = ", ".join(tags_raw) if isinstance(tags_raw, list) else str(tags_raw)
+        display  = f"{wid}  {url}" if wid else url
+        table.add_row(str(i), display, label, target, interval, tags)
+
+    console.print(table)
+    console.print(f"\n[dim]{len(watchers)} watcher(s) total.[/]")
+
+
 @app.command("db")
 def cmd_db(
     connection_string: str       = typer.Argument(..., help="DB connection string (sqlite:///app.db, postgresql://..., mysql://...)."),
