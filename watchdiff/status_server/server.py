@@ -33,7 +33,7 @@ class StatusServer:
     def __init__(
         self,
         get_statuses: Callable[[], list[Any]],
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 9090,
     ) -> None:
         self._get_statuses = get_statuses

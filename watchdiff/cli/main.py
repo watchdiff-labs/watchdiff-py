@@ -964,7 +964,7 @@ def cmd_pause(
         f"  wd.start(block=False)\n"
         f"  wd.pause({id_or_url!r})   # pause by URL or watcher id\n"
         f"  wd.resume({id_or_url!r})  # resume\n\n"
-        f"See: https://github.com/r-seize/watchdiff-py#pause-and-resume"
+        f"See: https://github.com/watchdiff-labs/watchdiff-py#pause-and-resume"
     )
 
 
@@ -979,7 +979,7 @@ def cmd_resume(
         f"  wd.start(block=False)\n"
         f"  wd.pause({id_or_url!r})   # pause by URL or watcher id\n"
         f"  wd.resume({id_or_url!r})  # resume\n\n"
-        f"See: https://github.com/r-seize/watchdiff-py#pause-and-resume"
+        f"See: https://github.com/watchdiff-labs/watchdiff-py#pause-and-resume"
     )
 
 

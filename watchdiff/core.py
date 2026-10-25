@@ -164,6 +164,7 @@ class WatchDiff:
         request_body: str | dict | None                                                        = None,
         tags: list[str] | None                                                                 = None,
         min_interval: int | None                                                               = None,
+        max_response_size: int                                                                 = 10 * 1024 * 1024,
     ) -> WatchDiff:
         """
         Register a URL to monitor.
@@ -273,6 +274,7 @@ class WatchDiff:
             request_body             = request_body,
             tags                     = tags or [],
             min_interval             = min_interval,
+            max_response_size        = max_response_size,
         )
         self._configs.append(config)
         return self

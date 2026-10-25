@@ -2,8 +2,8 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/watchdiff-core?color=blue)](https://pypi.org/project/watchdiff-core/)
 [![Python versions](https://img.shields.io/pypi/pyversions/watchdiff-core)](https://pypi.org/project/watchdiff-core/)
-[![CI](https://github.com/r-seize/watchdiff-py/actions/workflows/ci.yml/badge.svg)](https://github.com/r-seize/watchdiff-py/actions/workflows/ci.yml)
-[![License: BSD-2-Clause](https://img.shields.io/badge/license-BSD--2--Clause-blue)](LICENSE)
+[![CI](https://github.com/watchdiff-labs/watchdiff-py/actions/workflows/ci.yml/badge.svg)](https://github.com/watchdiff-labs/watchdiff-py/actions/workflows/ci.yml)
+[![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
 
 **Lightweight web change monitoring - clean diffs, AI summaries, file/API/SSL monitoring, structured alerts.**
 
@@ -55,6 +55,7 @@ WatchDiff watches web pages, files, APIs, databases, and SSL certificates - then
 | Add custom webhook headers | `webhook_headers={"X-Api-Key": "secret"}` — merged into every webhook POST |
 | Auto-delete old snapshots | `retention_days=30` — snapshots older than N days are pruned after each save |
 | HTTP Basic Auth | `auth={"username": "user", "password": "pass"}` |
+| Cap response size | `max_response_size=5_000_000` — raise FetchError if response exceeds N bytes (default 10 MB) |
 | Hook before each fetch | `on_before_check=lambda cfg: print(cfg.label)` |
 | Send POST instead of GET | `request_body={"query": "..."}` — dict → JSON body, str → raw body |
 | Tag watchers for group control | `tags=["shop", "critical"]` then `wd.pause_by_tag("shop")` |
@@ -1946,6 +1947,7 @@ Register a URL to monitor. All keyword arguments are optional. Returns `self` (c
 | `request_body` | `str \| dict \| None` | `None` | Send POST with this body; `dict` → JSON, `str` → raw |
 | `tags` | `list[str]` | `[]` | Group labels for `pause_by_tag()` / `resume_by_tag()` |
 | `min_interval` | `int \| None` | `None` | Floor on interval in seconds — overrides global `WatchDiff(min_interval=...)` |
+| `max_response_size` | `int` | `10485760` | Raise `FetchError` if the HTTP response body exceeds this many bytes |
 
 ```python
 # Chainable
@@ -2828,12 +2830,37 @@ signal.signal(signal.SIGTERM, lambda *_: wd.stop())
 - **Observability** — expose watcher metrics to Prometheus / Grafana via `/metrics`
 - **Research** — collect snapshots for longitudinal content analysis
 
+## Security
+
+### Reporting vulnerabilities
+
+Please report security issues privately to the maintainers via GitHub Security Advisories rather than opening a public issue.
+
+### Built-in protections (v0.3.0+)
+
+| Protection | Detail |
+|---|---|
+| **SSRF prevention** | Only `http://` and `https://` URL schemes are accepted. Passing `file://`, `gopher://`, or any other scheme raises a `FetchError` before any network call is made. |
+| **Response size cap** | HTTP responses are capped at `max_response_size` (default **10 MB**). Override per-watcher: `wd.watch(url, max_response_size=5_000_000)`. |
+| **Credential redaction** | Passwords embedded in URLs (`https://user:pass@host`) are stripped from all log messages and error strings. |
+| **SMTP TLS verification** | All SMTP connections (both `SMTP_SSL` and `STARTTLS`) use `ssl.create_default_context()`, which verifies the server certificate against the system trust store. |
+| **Gemini key as header** | The Gemini API key is passed as `x-goog-api-key` header instead of a URL query parameter, preventing accidental exposure in server access logs. |
+| **Status server localhost-only** | `StatusServer` now binds to `127.0.0.1` by default. Pass `host="0.0.0.0"` explicitly if you need external access. |
+
+### Notes on `watch_file()` and `FileFetcher`
+
+`watch_file()` reads arbitrary local files by design. Do not pass untrusted paths as the URL. If you expose a WatchDiff config endpoint to external users, validate the path server-side before registering a file watcher.
+
+### Notes on `watch_db()` custom queries
+
+The `query=` parameter is executed as-is against the target database. WatchDiff table names are properly quoted, but custom queries are not further sanitized — they are trusted input from the config author.
+
 ## Contributing
 
-Missing a feature? Found a bug? Pull requests are welcome on [GitHub](https://github.com/r-seize/watchdiff-py).
+Missing a feature? Found a bug? Pull requests are welcome on [GitHub](https://github.com/watchdiff-labs/watchdiff-py).
 
 ## License
 
-This project is licensed under the [BSD 2-Clause License](LICENSE).
+This project is licensed under the [BSD 3-Clause License](LICENSE).
 
-Copyright (c) 2026, WatchDiff Contributors. Free to use in open-source and commercial projects.
+Copyright (c) 2026, WatchDiff Labs Contributors. Free to use in open-source and commercial projects.

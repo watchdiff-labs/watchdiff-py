@@ -200,8 +200,8 @@ def _call_gemini(prompt: str, provider: AiProvider) -> str | None:
     model   = provider.model or _DEFAULTS["gemini"]
     api_key = provider.api_key or ""
     resp    = _http_post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
-        headers={},
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        headers={"x-goog-api-key": api_key},
         body={"contents": [{"parts": [{"text": prompt}]}]},
     )
     candidates = resp.get("candidates") or []

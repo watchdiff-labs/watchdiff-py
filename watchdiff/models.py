@@ -105,6 +105,7 @@ class WatchConfig:
     request_body:         str | dict | None              = None     # send POST with this body instead of GET
     tags:                 list[str]                      = field(default_factory=list)  # group labels for pause/resume
     min_interval:         int | None                     = None     # minimum seconds between two checks (floor on jitter)
+    max_response_size:    int                            = 10 * 1024 * 1024  # cap response body at 10 MB by default
 
     def __post_init__(self) -> None:
         if not self.label:

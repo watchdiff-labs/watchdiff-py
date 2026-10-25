@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import smtplib
+import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -26,12 +27,13 @@ def send_email(config: EmailConfig, report: DiffReport) -> None:
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain"))
 
+    tls_ctx = ssl.create_default_context()
     if use_ssl:
-        with smtplib.SMTP_SSL(smtp.host, smtp.port) as server:
+        with smtplib.SMTP_SSL(smtp.host, smtp.port, context=tls_ctx) as server:
             server.login(smtp.user, smtp.password)
             server.sendmail(from_addr, to_addrs, msg.as_string())
     else:
         with smtplib.SMTP(smtp.host, smtp.port) as server:
-            server.starttls()
+            server.starttls(context=tls_ctx)
             server.login(smtp.user, smtp.password)
             server.sendmail(from_addr, to_addrs, msg.as_string())

@@ -22,6 +22,8 @@ import time
 
 import httpx
 
+from urllib.parse import urlparse
+
 from watchdiff.models import WatchConfig
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,27 @@ _DEFAULT_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
 ]
 
-_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_RETRYABLE_STATUS   = {429, 500, 502, 503, 504}
+_ALLOWED_SCHEMES    = {"http", "https"}
+_DEFAULT_MAX_BYTES  = 10 * 1024 * 1024  # 10 MB
+
+
+def _validate_url(url: str) -> None:
+    """Reject non-HTTP(S) schemes to prevent SSRF via file://, gopher://, etc."""
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise FetchError(f"Blocked URL scheme {scheme!r} — only http and https are allowed.")
+
+
+def _redact_url(url: str) -> str:
+    """Strip embedded credentials from a URL before using it in log messages."""
+    try:
+        p = urlparse(url)
+        if p.password:
+            p = p._replace(netloc=f"{p.hostname}" if not p.port else f"{p.hostname}:{p.port}")
+        return p.geturl()
+    except Exception:  # noqa: BLE001
+        return url
 
 
 def _pick_ua(config: WatchConfig) -> str:
@@ -87,6 +109,8 @@ class Fetcher:
         Raises:
             FetchError: after all retries are exhausted.
         """
+        _validate_url(config.url)
+        safe_url = _redact_url(config.url)
         headers = {**_DEFAULT_ACCEPT_HEADERS, "User-Agent": _pick_ua(config), **config.headers}
         if config.cookies:
             existing = headers.get("Cookie", "")
@@ -101,7 +125,8 @@ class Fetcher:
         if auth:
             client_kwargs["auth"] = (auth["username"], auth["password"])
 
-        request_body = getattr(config, "request_body", None)
+        request_body    = getattr(config, "request_body", None)
+        max_bytes       = getattr(config, "max_response_size", _DEFAULT_MAX_BYTES)
         last_exc: Exception | None = None
 
         for attempt in range(config.retries + 1):
@@ -119,21 +144,26 @@ class Fetcher:
                     else:
                         resp = client.get(config.url, headers=headers)
                     if resp.status_code in _RETRYABLE_STATUS and attempt < config.retries:
-                        last_exc = FetchError(f"HTTP {resp.status_code} for {config.url}")
+                        last_exc = FetchError(f"HTTP {resp.status_code} for {safe_url}")
                         continue
                     resp.raise_for_status()
+                    if len(resp.content) > max_bytes:
+                        raise FetchError(
+                            f"Response from {safe_url} exceeds max_response_size "
+                            f"({len(resp.content)} > {max_bytes} bytes)."
+                        )
                     return resp.text
             except httpx.HTTPStatusError as exc:
                 code     = exc.response.status_code
-                last_exc = FetchError(f"HTTP {code} for {config.url}", status_code=code)
+                last_exc = FetchError(f"HTTP {code} for {safe_url}", status_code=code)
                 if code not in _RETRYABLE_STATUS or attempt >= config.retries:
-                    raise FetchError(f"HTTP {code} for {config.url}", status_code=code) from exc
+                    raise FetchError(f"HTTP {code} for {safe_url}", status_code=code) from exc
             except httpx.RequestError as exc:
-                last_exc = FetchError(f"Request failed for {config.url}: {exc}", status_code=0)
+                last_exc = FetchError(f"Request failed for {safe_url}: {exc}", status_code=0)
                 if attempt >= config.retries:
-                    raise FetchError(f"Request failed for {config.url}: {exc}", status_code=0) from exc
+                    raise FetchError(f"Request failed for {safe_url}: {exc}", status_code=0) from exc
 
-        raise last_exc or FetchError(f"All retries exhausted for {config.url}", status_code=0)
+        raise last_exc or FetchError(f"All retries exhausted for {safe_url}", status_code=0)
 
 
 class AsyncFetcher:
@@ -149,6 +179,8 @@ class AsyncFetcher:
         Raises:
             FetchError: after all retries are exhausted.
         """
+        _validate_url(config.url)
+        safe_url = _redact_url(config.url)
         headers = {**_DEFAULT_ACCEPT_HEADERS, "User-Agent": _pick_ua(config), **config.headers}
         if config.cookies:
             existing = headers.get("Cookie", "")
@@ -163,7 +195,8 @@ class AsyncFetcher:
         if auth:
             client_kwargs["auth"] = (auth["username"], auth["password"])
 
-        request_body = getattr(config, "request_body", None)
+        request_body    = getattr(config, "request_body", None)
+        max_bytes       = getattr(config, "max_response_size", _DEFAULT_MAX_BYTES)
         last_exc: Exception | None = None
 
         for attempt in range(config.retries + 1):
@@ -181,18 +214,23 @@ class AsyncFetcher:
                     else:
                         resp = await client.get(config.url, headers=headers)
                     if resp.status_code in _RETRYABLE_STATUS and attempt < config.retries:
-                        last_exc = FetchError(f"HTTP {resp.status_code} for {config.url}")
+                        last_exc = FetchError(f"HTTP {resp.status_code} for {safe_url}")
                         continue
                     resp.raise_for_status()
+                    if len(resp.content) > max_bytes:
+                        raise FetchError(
+                            f"Response from {safe_url} exceeds max_response_size "
+                            f"({len(resp.content)} > {max_bytes} bytes)."
+                        )
                     return resp.text
             except httpx.HTTPStatusError as exc:
                 code     = exc.response.status_code
-                last_exc = FetchError(f"HTTP {code} for {config.url}", status_code=code)
+                last_exc = FetchError(f"HTTP {code} for {safe_url}", status_code=code)
                 if code not in _RETRYABLE_STATUS or attempt >= config.retries:
-                    raise FetchError(f"HTTP {code} for {config.url}", status_code=code) from exc
+                    raise FetchError(f"HTTP {code} for {safe_url}", status_code=code) from exc
             except httpx.RequestError as exc:
-                last_exc = FetchError(f"Request failed for {config.url}: {exc}", status_code=0)
+                last_exc = FetchError(f"Request failed for {safe_url}: {exc}", status_code=0)
                 if attempt >= config.retries:
-                    raise FetchError(f"Request failed for {config.url}: {exc}", status_code=0) from exc
+                    raise FetchError(f"Request failed for {safe_url}: {exc}", status_code=0) from exc
 
-        raise last_exc or FetchError(f"All retries exhausted for {config.url}", status_code=0)
+        raise last_exc or FetchError(f"All retries exhausted for {safe_url}", status_code=0)
